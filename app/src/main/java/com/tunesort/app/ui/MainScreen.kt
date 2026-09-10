@@ -79,8 +79,8 @@ fun MainScreen(viewModel: MainViewModel) {
 private fun SongRow(song: Song, onOverride: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val genres = listOf(
-        "Worship", "Love/Romance", "Heartbreak/Sad", "Party/Dance",
-        "Motivation/Hype", "Chill/Lofi", "Uncategorized"
+        "Worship/Praise", "Hymns", "Gospel", "Contemporary Christian",
+        "Christian Hip-Hop/Rap", "Christian Rock/Pop", "Christmas", "Uncategorized"
     )
 
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {

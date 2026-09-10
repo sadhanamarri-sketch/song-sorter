@@ -6,8 +6,8 @@ object GenreClassifier {
 
     /**
      * Scores each genre by keyword hits in the lyrics, nudges the score using
-     * the tempo bucket (fast songs get a small boost toward Party/Motivation,
-     * slow songs toward Chill/Heartbreak/Worship), then picks the winner.
+     * the tempo bucket (fast songs get a small boost toward Gospel/Hip-Hop/Rock,
+     * slow songs toward Hymns/Worship), then picks the winner.
      * Falls back to a tempo-only genre if there are no lyrics at all.
      */
     fun classify(song: Song) {
@@ -44,20 +44,20 @@ object GenreClassifier {
     private fun applyTempoBias(scores: MutableMap<String, Double>, bucket: String?) {
         when (bucket) {
             "fast" -> {
-                scores["Party/Dance"] = (scores["Party/Dance"] ?: 0.0) + 1.5
-                scores["Motivation/Hype"] = (scores["Motivation/Hype"] ?: 0.0) + 1.0
+                scores["Gospel"] = (scores["Gospel"] ?: 0.0) + 1.0
+                scores["Christian Hip-Hop/Rap"] = (scores["Christian Hip-Hop/Rap"] ?: 0.0) + 1.0
+                scores["Christian Rock/Pop"] = (scores["Christian Rock/Pop"] ?: 0.0) + 1.5
             }
             "slow" -> {
-                scores["Chill/Lofi"] = (scores["Chill/Lofi"] ?: 0.0) + 1.5
-                scores["Heartbreak/Sad"] = (scores["Heartbreak/Sad"] ?: 0.0) + 0.5
-                scores["Worship"] = (scores["Worship"] ?: 0.0) + 0.5
+                scores["Hymns"] = (scores["Hymns"] ?: 0.0) + 1.5
+                scores["Worship/Praise"] = (scores["Worship/Praise"] ?: 0.0) + 0.5
             }
         }
     }
 
     private fun tempoOnlyGenre(bucket: String?): String = when (bucket) {
-        "fast" -> "Party/Dance"
-        "slow" -> "Chill/Lofi"
+        "fast" -> "Christian Rock/Pop"
+        "slow" -> "Worship/Praise"
         "mid" -> "Uncategorized"
         else -> "Uncategorized"
     }

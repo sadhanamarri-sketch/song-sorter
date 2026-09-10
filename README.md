@@ -24,9 +24,11 @@ not replace it — that app fetches/saves lyrics, this app reads what it saved.
    and autocorrelates it to estimate BPM. This is a heuristic, not
    beat-tracking-grade accuracy — expect it to land within roughly ±15%.
 4. **Genre** — scores the lyrics against word lists in `GenreKeywords.kt`
-   (fully yours to edit/expand), nudged by the tempo bucket (fast → Party/
-   Motivation, slow → Chill/Heartbreak/Worship). Songs with no lyrics found
-   fall back to a tempo-only guess.
+   (fully yours to edit/expand), nudged by the tempo bucket (fast → Gospel/
+   Christian Hip-Hop/Christian Rock, slow → Hymns/Worship). Ships tuned for a
+   Christian music library — Worship/Praise, Hymns, Gospel, Contemporary
+   Christian, Christian Hip-Hop/Rap, Christian Rock/Pop, and Christmas.
+   Songs with no lyrics found fall back to a tempo-only guess.
 5. **Review** — every song shows its detected BPM, lyrics source, and
    assigned genre with a dropdown to override it before applying anything.
 6. **Apply** — by default, songs are *moved* (copy + delete original) into
