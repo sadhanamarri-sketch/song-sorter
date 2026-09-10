@@ -61,9 +61,15 @@ object Id3Tag {
         return ParsedTag(version, headerSize, frames)
     }
 
-    /** Decodes a text-information frame body (TCON, TIT2, ...) honoring the encoding byte. */
+    /**
+     * Bytes occupied by a frame's own header before its body: id + size for v2.2
+     * (3 + 3 = 6), or id + size + flags for v2.3/v2.4 (4 + 4 + 2 = 10).
+     */
+    private fun frameHeaderLen(idLen: Int) = if (idLen == 3) 6 else 10
+
+    /** Decodes a text-information frame body (TCON, TIT2, TLAN, ...) honoring the encoding byte. */
     fun frameText(frame: RawFrame, idLen: Int = 4): String {
-        val bodyStart = idLen + if (idLen == 3) 3 else 4
+        val bodyStart = frameHeaderLen(idLen)
         if (frame.bytes.size <= bodyStart) return ""
         val encoding = frame.bytes[bodyStart].toInt()
         val textBytes = frame.bytes.copyOfRange(bodyStart + 1, frame.bytes.size)
@@ -72,8 +78,7 @@ object Id3Tag {
 
     /** Decodes a USLT (unsynchronized lyrics) frame body: encoding + lang(3) + desc + text. */
     fun usltText(frame: RawFrame, idLen: Int = 4): String {
-        val headerLen = idLen + if (idLen == 3) 3 else 4
-        var p = headerLen
+        var p = frameHeaderLen(idLen)
         if (frame.bytes.size <= p) return ""
         val encoding = frame.bytes[p].toInt(); p += 1
         p += 3 // language
@@ -90,6 +95,13 @@ object Id3Tag {
         }
         if (p >= frame.bytes.size) return ""
         return decodeText(frame.bytes.copyOfRange(p, frame.bytes.size), encoding)
+    }
+
+    /** Reads the 3-letter ISO-639-2 language code a USLT frame carries in its own header. */
+    fun usltLanguage(frame: RawFrame, idLen: Int = 4): String? {
+        val langStart = frameHeaderLen(idLen) + 1 // skip the encoding byte
+        if (frame.bytes.size < langStart + 3) return null
+        return String(frame.bytes, langStart, 3, Charsets.US_ASCII)
     }
 
     private fun decodeText(bytes: ByteArray, encoding: Int): String = when (encoding) {

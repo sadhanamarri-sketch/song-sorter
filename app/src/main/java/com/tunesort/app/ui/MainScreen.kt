@@ -88,7 +88,8 @@ private fun SongRow(song: Song, onOverride: (String) -> Unit) {
             Text(song.displayName, style = MaterialTheme.typography.bodyLarge)
             Text(
                 "BPM: ${song.bpm?.toInt() ?: "?"} (${song.tempoBucket ?: "?"})  ·  " +
-                        "Lyrics: ${song.lyricsSource ?: "none found"}  ·  Status: ${song.status}",
+                        "Lyrics: ${song.lyricsSource ?: "none found"} (${song.language ?: "?"})  ·  " +
+                        "Status: ${song.status}",
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(4.dp))
