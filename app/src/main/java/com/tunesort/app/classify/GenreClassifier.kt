@@ -57,9 +57,9 @@ object GenreClassifier {
 
     private fun tempoOnlyGenre(bucket: String?): String = when (bucket) {
         "fast" -> "Christian Rock/Pop"
+        "mid" -> "Contemporary Christian"
         "slow" -> "Worship/Praise"
-        "mid" -> "Uncategorized"
-        else -> "Uncategorized"
+        else -> "Uncategorized" // BPM detection itself failed — no signal at all
     }
 
     private fun countOccurrences(text: String, phrase: String): Int {
