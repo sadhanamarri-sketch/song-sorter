@@ -145,6 +145,10 @@ object BpmAnalyzer {
         return flux
     }
 
+    // A slower candidate lag "wins" over the raw peak if it retains at least this
+    // fraction of the peak's autocorrelation score — see the subdivision comment below.
+    private const val SLOWER_CANDIDATE_THRESHOLD = 0.6
+
     /** Autocorrelate the onset envelope over plausible tempo lags (60-200 BPM). */
     private fun autocorrelationBpm(envelope: DoubleArray, framesPerSecond: Int): Double? {
         if (envelope.size < framesPerSecond * 2) return null
@@ -154,9 +158,8 @@ object BpmAnalyzer {
         val maxLag = (60.0 / minBpm * framesPerSecond).toInt().coerceAtMost(envelope.size - 1)
         if (minLag >= maxLag) return null
 
-        var bestLag = -1
-        var bestScore = -1.0
-        for (lag in minLag..maxLag) {
+        fun scoreAtLag(lag: Int): Double {
+            if (lag <= 0 || lag >= envelope.size) return -1.0
             var score = 0.0
             var n = 0
             var i = 0
@@ -165,11 +168,33 @@ object BpmAnalyzer {
                 n++
                 i++
             }
-            if (n > 0) score /= n
+            return if (n > 0) score / n else -1.0
+        }
+
+        var bestLag = -1
+        var bestScore = -1.0
+        for (lag in minLag..maxLag) {
+            val score = scoreAtLag(lag)
             if (score > bestScore) { bestScore = score; bestLag = lag }
         }
         if (bestLag <= 0) return null
-        var bpm = 60.0 * framesPerSecond / bestLag
+
+        // Melodious/slow songs often autocorrelate most strongly at a fine rhythmic
+        // subdivision (gentle strumming, vocal syllables) rather than the actual felt
+        // beat, which reads as a falsely fast tempo. The true beat's own periodicity
+        // is still there in that case — just at a weaker score — so if a slower
+        // candidate (half, a third, or a quarter of the raw peak's BPM) is still
+        // nearly as strong, it's almost always the real tempo; prefer the slowest
+        // one that clears the bar.
+        var lag = bestLag
+        for (divisor in intArrayOf(2, 3, 4)) {
+            val slowerLag = bestLag * divisor
+            if (scoreAtLag(slowerLag) >= bestScore * SLOWER_CANDIDATE_THRESHOLD) {
+                lag = slowerLag
+            }
+        }
+
+        var bpm = 60.0 * framesPerSecond / lag
         // fold into a musically common 60-200 range (halve/double octave errors)
         while (bpm > 200) bpm /= 2
         while (bpm < 60) bpm *= 2
