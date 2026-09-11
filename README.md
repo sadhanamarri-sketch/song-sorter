@@ -33,7 +33,10 @@ not replace it — that app fetches/saves lyrics, this app reads what it saved.
    assigned genre with a dropdown to override it before applying anything.
 6. **Apply** — by default, songs are *moved* (copy + delete original) into
    `<your folder>/<Genre>/filename.ext`. This never touches file contents,
-   so it can't corrupt anything, and works for every format.
+   so it can't corrupt anything, and works for every format. Apply also
+   (re)generates Poweramp playlists in `<your folder>/Playlists/`, one per
+   genre+tempo combination present (e.g. `Worship-Praise - Fast.m3u8`) —
+   Poweramp auto-detects standalone playlist files on its next library scan.
 
 ## Optional: writing the genre into MP3 tags too
 There's a toggle to also rewrite the ID3v2 `TCON` (genre) frame in place for

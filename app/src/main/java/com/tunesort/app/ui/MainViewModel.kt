@@ -10,6 +10,7 @@ import com.tunesort.app.model.Song
 import com.tunesort.app.model.SortStatus
 import com.tunesort.app.scanner.LibraryScanner
 import com.tunesort.app.sort.FileSorter
+import com.tunesort.app.sort.PlaylistWriter
 import com.tunesort.app.sort.TagWriter
 import com.tunesort.app.tempo.BpmAnalyzer
 import kotlinx.coroutines.Dispatchers
@@ -89,14 +90,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _state.update { it.copy(isSorting = true, progressDone = 0, progressTotal = it.songs.size) }
             withContext(Dispatchers.IO) {
+                val sortedSongs = mutableListOf<Pair<Song, String>>()
                 for (song in _state.value.songs) {
                     if (song.genre == null) { _state.update { it.copy(progressDone = it.progressDone + 1) }; continue }
                     if (_state.value.writeId3Genre) {
                         TagWriter.writeGenreTag(context, song) // best-effort, ignore failure
                     }
-                    val ok = FileSorter.moveIntoGenreFolder(context, treeUri, song)
-                    song.status = if (ok) SortStatus.DONE else SortStatus.FAILED
+                    val relativePath = FileSorter.moveIntoGenreFolder(context, treeUri, song)
+                    song.status = if (relativePath != null) SortStatus.DONE else SortStatus.FAILED
+                    if (relativePath != null) sortedSongs.add(song to relativePath)
                     _state.update { it.copy(progressDone = it.progressDone + 1) }
+                }
+                // Poweramp playlists combining genre + tempo, e.g. "Worship-Praise - Fast.m3u8".
+                if (sortedSongs.isNotEmpty()) {
+                    PlaylistWriter.writePlaylists(context, treeUri, sortedSongs)
                 }
             }
             _state.update { it.copy(isSorting = false, songs = it.songs.toList()) }
