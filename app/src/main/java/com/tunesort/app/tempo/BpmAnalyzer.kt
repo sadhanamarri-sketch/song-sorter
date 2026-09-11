@@ -109,7 +109,7 @@ object BpmAnalyzer {
             }
             if (trackIndex < 0 || format == null) return null
             extractor.selectTrack(trackIndex)
-            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC_POINT)
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             val codec = MediaCodec.createDecoderByType(mime)
