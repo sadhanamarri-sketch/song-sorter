@@ -36,8 +36,21 @@ fun MainScreen(viewModel: MainViewModel) {
 
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = state.newSongsOnly, onCheckedChange = { viewModel.toggleNewSongsOnly(it) })
+                Text("Only scan new songs (skip TuneSort's own genre folders)")
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = state.writeId3Genre, onCheckedChange = { viewModel.toggleWriteId3(it) })
                 Text("Also write genre into MP3 tags (advanced, keep off if unsure)")
+            }
+
+            if (state.treeUri != null && !state.isScanning && !state.isAnalyzing) {
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(onClick = { viewModel.rescan() }) {
+                    Text("Rescan")
+                }
             }
 
             if (state.isScanning) Text("Scanning folder…")

@@ -13,7 +13,12 @@ not replace it — that app fetches/saves lyrics, this app reads what it saved.
 ## How it works
 1. **Pick a folder** — grant access to your Music/Download folder via the
    system folder picker (Storage Access Framework). TuneSort scans it
-   recursively for audio files (mp3/flac/m4a/aac/ogg/wav/opus).
+   recursively for audio files (mp3/flac/m4a/aac/ogg/wav/opus). "Only scan
+   new songs" is on by default — it skips TuneSort's own genre and
+   `Playlists` folders from a previous run, so re-scanning the same root
+   folder doesn't re-process (and rename) already-sorted songs. Turn it off
+   to force a full re-scan of everything. Toggling it doesn't re-scan by
+   itself — tap **Rescan** (shown once a folder's picked) to apply it.
 2. **Lyrics** — for each song it looks for a sidecar `.lrc`/`.txt` file with
    the same name in the same folder (what "Lyrics for Poweramp" saves when
    you use its file-based storage mode), and if that's missing, tries to

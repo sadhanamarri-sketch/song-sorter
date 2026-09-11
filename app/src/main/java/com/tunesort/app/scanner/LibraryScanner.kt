@@ -14,14 +14,20 @@ private val AUDIO_EXT = setOf("mp3", "flac", "m4a", "aac", "ogg", "wav", "opus")
  */
 object LibraryScanner {
 
-    fun scan(context: Context, treeUri: Uri): List<Song> {
+    /**
+     * @param excludeDirNames top-level folder names to skip entirely (e.g. the app's own
+     * genre folders from a previous sort), so re-scanning doesn't re-process already-sorted
+     * songs. Only checked at the root — a deeper folder that happens to share a name is
+     * never skipped.
+     */
+    fun scan(context: Context, treeUri: Uri, excludeDirNames: Set<String> = emptySet()): List<Song> {
         val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
         val results = mutableListOf<Song>()
-        walk(root, results)
+        walk(root, results, excludeDirNames, isTopLevel = true)
         return results
     }
 
-    private fun walk(dir: DocumentFile, out: MutableList<Song>) {
+    private fun walk(dir: DocumentFile, out: MutableList<Song>, excludeDirNames: Set<String>, isTopLevel: Boolean) {
         val children = dir.listFiles()
 
         // Index sidecar text files in this directory by lowercase base name.
@@ -32,7 +38,8 @@ object LibraryScanner {
 
         for (child in children) {
             if (child.isDirectory) {
-                walk(child, out)
+                if (isTopLevel && child.name in excludeDirNames) continue
+                walk(child, out, excludeDirNames, isTopLevel = false)
                 continue
             }
             val name = child.name ?: continue

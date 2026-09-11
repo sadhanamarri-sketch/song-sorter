@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tunesort.app.classify.GenreClassifier
+import com.tunesort.app.classify.GenreKeywords
 import com.tunesort.app.lyrics.LyricsReader
 import com.tunesort.app.model.Song
 import com.tunesort.app.model.SortStatus
@@ -28,6 +29,7 @@ data class UiState(
     val isAnalyzing: Boolean = false,
     val isSorting: Boolean = false,
     val writeId3Genre: Boolean = false, // off by default: folder-sort is the safe default
+    val newSongsOnly: Boolean = true, // skip folders TuneSort already sorted into, on by default
     val progressDone: Int = 0,
     val progressTotal: Int = 0
 )
@@ -50,11 +52,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(writeId3Genre = enabled) }
     }
 
+    fun toggleNewSongsOnly(enabled: Boolean) {
+        _state.update { it.copy(newSongsOnly = enabled) }
+    }
+
+    /** Re-scans the already-chosen folder, e.g. after flipping "new songs only". */
+    fun rescan() {
+        val uri = _state.value.treeUri ?: return
+        scanAndAnalyze(uri)
+    }
+
+    /** TuneSort's own genre (+ Playlists) folder names, to skip when scanning for new songs only. */
+    private fun sortedFolderNames(): Set<String> =
+        (GenreKeywords.GENRES.keys + "Uncategorized" + "Playlists")
+            .map { FileSorter.sanitizeFolderName(it) }
+            .toSet()
+
     private fun scanAndAnalyze(uri: Uri) {
         val context = getApplication<Application>()
+        val excludeDirNames = if (_state.value.newSongsOnly) sortedFolderNames() else emptySet()
         viewModelScope.launch {
             _state.update { it.copy(isScanning = true) }
-            val songs = withContext(Dispatchers.IO) { LibraryScanner.scan(context, uri) }
+            val songs = withContext(Dispatchers.IO) { LibraryScanner.scan(context, uri, excludeDirNames) }
             _state.update { it.copy(isScanning = false, songs = songs, progressTotal = songs.size, progressDone = 0) }
 
             _state.update { it.copy(isAnalyzing = true) }
