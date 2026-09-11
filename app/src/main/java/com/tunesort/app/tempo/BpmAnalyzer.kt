@@ -5,57 +5,47 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Basic on-device tempo estimate. Not studio-grade beat tracking — it's an
- * energy-flux onset envelope + autocorrelation, which is the standard
- * "good enough" approach for bucketing songs into slow/mid/fast without
- * a cloud API. Expect it to be right within ~±15% most of the time.
+ * Basic on-device tempo estimate. Not studio-grade beat tracking — it's a
+ * high-pass-filtered onset envelope + autocorrelation, sampled from several
+ * points across the track and combined by confidence-weighted median. This is
+ * the standard "good enough" approach for bucketing songs into slow/mid/fast
+ * without a cloud API — expect it to land close, not frame-accurate.
  */
 object BpmAnalyzer {
 
-    private const val ANALYZE_SECONDS = 60 // analyze up to first 60s, skip a short intro
     private const val SKIP_INTRO_SECONDS = 5
     private const val TARGET_SAMPLE_RATE = 11025 // downsample target, plenty for tempo
-    private const val WINDOW_SECONDS = 15 // splits the analyzed audio into windows this long
+    private const val WINDOW_SECONDS = 20 // length of each analyzed region
+
+    private data class TempoEstimate(val bpm: Double, val confidence: Double)
 
     /**
-     * Splits the analyzed audio into several [WINDOW_SECONDS] windows, estimates BPM in
-     * each independently, and takes the median. A single window's read can be thrown off
-     * by a local passage (a quiet bridge, a fill) or a leftover subdivision ambiguity;
-     * combining several readings from across the song is more robust than trusting one.
-     * Median rather than mean, since one stray octave-off reading would drag a plain
-     * average far from the rest, while the median just ignores it as an outlier.
+     * Estimates BPM from up to three ~20s regions spread across the track (just past
+     * the intro, ~40%, and ~70% of the way through) rather than only the first minute —
+     * a song's real groove often isn't established until the chorus. Each region's
+     * estimate carries a confidence score (how sharply its autocorrelation peak stood
+     * out), and the final result is the confidence-weighted median across regions, so a
+     * murky/ambiguous region doesn't outvote a clear one.
      */
     fun estimateBpm(context: Context, uri: Uri): Double? {
-        val pcm = decodeToMonoPcm(context, uri) ?: return null
-        if (pcm.size < TARGET_SAMPLE_RATE * 5) return null // too short to analyze
-
+        val durationUs = probeDurationUs(context, uri)
         val windowSamples = TARGET_SAMPLE_RATE * WINDOW_SECONDS
-        val readings = mutableListOf<Double>()
-        var offset = 0
-        while (offset + windowSamples <= pcm.size) {
-            val window = pcm.copyOfRange(offset, offset + windowSamples)
-            val envelope = onsetEnvelope(window)
-            autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP)?.let { readings.add(it) }
-            offset += windowSamples
-        }
+        val estimates = mutableListOf<Pair<Double, Double>>() // (bpm, confidence)
 
-        if (readings.isEmpty()) {
-            // Shorter than one full window (e.g. a short track) — analyze what we have.
+        for (startUs in regionStartsUs(durationUs)) {
+            val pcm = decodeRegion(context, uri, startUs, windowSamples) ?: continue
+            if (pcm.size < TARGET_SAMPLE_RATE * 5) continue // too short a region to trust
             val envelope = onsetEnvelope(pcm)
-            return autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP)
+            val estimate = autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP) ?: continue
+            estimates.add(estimate.bpm to estimate.confidence)
         }
-        return median(readings)
-    }
 
-    private fun median(values: List<Double>): Double {
-        val sorted = values.sorted()
-        val mid = sorted.size / 2
-        return if (sorted.size % 2 == 0) (sorted[mid - 1] + sorted[mid]) / 2.0 else sorted[mid]
+        if (estimates.isEmpty()) return null
+        return weightedMedian(estimates)
     }
 
     fun bucket(bpm: Double?): String = when {
@@ -67,8 +57,41 @@ object BpmAnalyzer {
 
     private const val HOP = 256 // samples per envelope frame at TARGET_SAMPLE_RATE
 
-    /** Decodes audio to mono PCM16 at TARGET_SAMPLE_RATE, capped to ANALYZE_SECONDS. */
-    private fun decodeToMonoPcm(context: Context, uri: Uri): ShortArray? {
+    /** Reads just the audio track's duration (no decoding), to pick region start times. */
+    private fun probeDurationUs(context: Context, uri: Uri): Long? {
+        val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
+        pfd.use { pfdSafe ->
+            val extractor = MediaExtractor()
+            try {
+                extractor.setDataSource(pfdSafe.fileDescriptor)
+            } catch (e: Exception) {
+                return null
+            }
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("audio/")) {
+                    return if (f.containsKey(MediaFormat.KEY_DURATION)) f.getLong(MediaFormat.KEY_DURATION) else null
+                }
+            }
+            return null
+        }
+    }
+
+    /** Just past the intro, ~40%, and ~70% through the track — clamped so each region still fits. */
+    private fun regionStartsUs(durationUs: Long?): List<Long> {
+        val introSkipUs = SKIP_INTRO_SECONDS * 1_000_000L
+        if (durationUs == null || durationUs <= 0) return listOf(introSkipUs)
+
+        val windowUs = WINDOW_SECONDS * 1_000_000L
+        val latestStart = (durationUs - windowUs).coerceAtLeast(0)
+        return listOf(introSkipUs, (durationUs * 0.4).toLong(), (durationUs * 0.7).toLong())
+            .map { it.coerceIn(0, latestStart) }
+            .distinct()
+    }
+
+    /** Decodes mono PCM16 at TARGET_SAMPLE_RATE starting at [startUs], up to [targetSamples]. */
+    private fun decodeRegion(context: Context, uri: Uri, startUs: Long, targetSamples: Int): ShortArray? {
         val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
         pfd.use { pfdSafe ->
             val extractor = MediaExtractor()
@@ -86,6 +109,7 @@ object BpmAnalyzer {
             }
             if (trackIndex < 0 || format == null) return null
             extractor.selectTrack(trackIndex)
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC_POINT)
 
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             val codec = MediaCodec.createDecoderByType(mime)
@@ -97,8 +121,7 @@ object BpmAnalyzer {
             val channelCount = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
                 format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
 
-            val maxOutSamples = TARGET_SAMPLE_RATE * (ANALYZE_SECONDS + SKIP_INTRO_SECONDS)
-            val outBuffer = ShortArray(maxOutSamples)
+            val outBuffer = ShortArray(targetSamples)
             var outCount = 0
 
             val bufferInfo = MediaCodec.BufferInfo()
@@ -106,7 +129,7 @@ object BpmAnalyzer {
             var outputDone = false
             val downsampleStride = max(1, inSampleRate / TARGET_SAMPLE_RATE)
 
-            while (!outputDone && outCount < maxOutSamples) {
+            while (!outputDone && outCount < targetSamples) {
                 if (!inputDone) {
                     val inIndex = codec.dequeueInputBuffer(10_000)
                     if (inIndex >= 0) {
@@ -127,7 +150,7 @@ object BpmAnalyzer {
                     val shortBuf = outBuf.order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
                     val frameCount = bufferInfo.size / 2 / channelCount
                     var i = 0
-                    while (i < frameCount && outCount < maxOutSamples) {
+                    while (i < frameCount && outCount < targetSamples) {
                         // downmix to mono
                         var sum = 0
                         for (c in 0 until channelCount) sum += shortBuf.get(i * channelCount + c)
@@ -149,20 +172,40 @@ object BpmAnalyzer {
             extractor.release()
 
             if (outCount <= 0) return null
-            val skip = min(SKIP_INTRO_SECONDS * TARGET_SAMPLE_RATE, outCount / 4)
-            return outBuffer.copyOfRange(skip, outCount)
+            return outBuffer.copyOfRange(0, outCount)
         }
     }
 
-    /** Simple energy-based onset strength envelope, one value per HOP-sample frame. */
+    /**
+     * One-pole high-pass filter: y[n] = alpha*(y[n-1] + x[n] - x[n-1]). Strips out
+     * slow-moving content (sustained bass, pads, held vocal notes) so the energy
+     * computed from it responds to sharp attacks instead of overall loudness — the
+     * difference between "this frame is loud" and "something just hit."
+     */
+    private fun highPass(pcm: ShortArray, alpha: Double = 0.97): DoubleArray {
+        val out = DoubleArray(pcm.size)
+        var prevIn = 0.0
+        var prevOut = 0.0
+        for (i in pcm.indices) {
+            val x = pcm[i] / 32768.0
+            val y = alpha * (prevOut + x - prevIn)
+            out[i] = y
+            prevIn = x
+            prevOut = y
+        }
+        return out
+    }
+
+    /** Onset strength envelope, one value per HOP-sample frame, from the high-passed signal. */
     private fun onsetEnvelope(pcm: ShortArray): DoubleArray {
-        val frameCount = pcm.size / HOP
+        val filtered = highPass(pcm)
+        val frameCount = filtered.size / HOP
         val energy = DoubleArray(frameCount)
         for (f in 0 until frameCount) {
             var e = 0.0
             val start = f * HOP
-            for (i in start until min(start + HOP, pcm.size)) {
-                val v = pcm[i] / 32768.0
+            for (i in start until min(start + HOP, filtered.size)) {
+                val v = filtered[i]
                 e += v * v
             }
             energy[f] = e
@@ -180,7 +223,7 @@ object BpmAnalyzer {
     private const val SLOWER_CANDIDATE_THRESHOLD = 0.6
 
     /** Autocorrelate the onset envelope over plausible tempo lags (60-200 BPM). */
-    private fun autocorrelationBpm(envelope: DoubleArray, framesPerSecond: Int): Double? {
+    private fun autocorrelationBpm(envelope: DoubleArray, framesPerSecond: Int): TempoEstimate? {
         if (envelope.size < framesPerSecond * 2) return null
         val minBpm = 60.0
         val maxBpm = 200.0
@@ -203,8 +246,12 @@ object BpmAnalyzer {
 
         var bestLag = -1
         var bestScore = -1.0
+        var scoreSum = 0.0
+        var scoreCount = 0
         for (lag in minLag..maxLag) {
             val score = scoreAtLag(lag)
+            scoreSum += score
+            scoreCount++
             if (score > bestScore) { bestScore = score; bestLag = lag }
         }
         if (bestLag <= 0) return null
@@ -228,6 +275,27 @@ object BpmAnalyzer {
         // fold into a musically common 60-200 range (halve/double octave errors)
         while (bpm > 200) bpm /= 2
         while (bpm < 60) bpm *= 2
-        return (bpm * 10).let { kotlin.math.round(it) / 10 }
+
+        // How far the winning periodicity stands out above the average correlation
+        // across the whole search range: a sharp, confident peak vs. a flat, noisy one.
+        val meanScore = if (scoreCount > 0) scoreSum / scoreCount else 0.0
+        val confidence = if (meanScore > 0) ((bestScore - meanScore) / meanScore).coerceAtLeast(0.0) else 0.0
+
+        return TempoEstimate((bpm * 10).let { kotlin.math.round(it) / 10 }, confidence)
+    }
+
+    /** Median of (bpm, confidence) readings weighted by confidence, so a clear region
+     *  outweighs a murky one instead of every region counting equally. */
+    private fun weightedMedian(readings: List<Pair<Double, Double>>): Double {
+        val sorted = readings.sortedBy { it.first }
+        val totalWeight = sorted.sumOf { it.second }
+        if (totalWeight <= 0.0) return sorted[sorted.size / 2].first // no region stood out — plain median position
+
+        var cumulative = 0.0
+        for ((bpm, weight) in sorted) {
+            cumulative += weight
+            if (cumulative >= totalWeight / 2.0) return bpm
+        }
+        return sorted.last().first
     }
 }
