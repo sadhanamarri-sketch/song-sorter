@@ -20,12 +20,42 @@ object BpmAnalyzer {
     private const val ANALYZE_SECONDS = 60 // analyze up to first 60s, skip a short intro
     private const val SKIP_INTRO_SECONDS = 5
     private const val TARGET_SAMPLE_RATE = 11025 // downsample target, plenty for tempo
+    private const val WINDOW_SECONDS = 15 // splits the analyzed audio into windows this long
 
+    /**
+     * Splits the analyzed audio into several [WINDOW_SECONDS] windows, estimates BPM in
+     * each independently, and takes the median. A single window's read can be thrown off
+     * by a local passage (a quiet bridge, a fill) or a leftover subdivision ambiguity;
+     * combining several readings from across the song is more robust than trusting one.
+     * Median rather than mean, since one stray octave-off reading would drag a plain
+     * average far from the rest, while the median just ignores it as an outlier.
+     */
     fun estimateBpm(context: Context, uri: Uri): Double? {
         val pcm = decodeToMonoPcm(context, uri) ?: return null
         if (pcm.size < TARGET_SAMPLE_RATE * 5) return null // too short to analyze
-        val envelope = onsetEnvelope(pcm)
-        return autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP)
+
+        val windowSamples = TARGET_SAMPLE_RATE * WINDOW_SECONDS
+        val readings = mutableListOf<Double>()
+        var offset = 0
+        while (offset + windowSamples <= pcm.size) {
+            val window = pcm.copyOfRange(offset, offset + windowSamples)
+            val envelope = onsetEnvelope(window)
+            autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP)?.let { readings.add(it) }
+            offset += windowSamples
+        }
+
+        if (readings.isEmpty()) {
+            // Shorter than one full window (e.g. a short track) — analyze what we have.
+            val envelope = onsetEnvelope(pcm)
+            return autocorrelationBpm(envelope, framesPerSecond = TARGET_SAMPLE_RATE / HOP)
+        }
+        return median(readings)
+    }
+
+    private fun median(values: List<Double>): Double {
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 0) (sorted[mid - 1] + sorted[mid]) / 2.0 else sorted[mid]
     }
 
     fun bucket(bpm: Double?): String = when {
